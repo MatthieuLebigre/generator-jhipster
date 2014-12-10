@@ -5,11 +5,21 @@ var util = require('util'),
         chalk = require('chalk'),
         _s = require('underscore.string'),
         shelljs = require('shelljs'),
-        scriptBase = require('../script-base'),
-        entityUtils = require('./util.js');
+        scriptBase = require('../script-base');
 
 var EntityGenerator = module.exports = function EntityGenerator(args, options, config) {
     yeoman.generators.NamedBase.apply(this, arguments);
+    this.useConfigurationFile =false;
+    if (shelljs.test('-f', '.jhipster.' + this.name + '.json')) {
+        console.log(chalk.green('Found the .jhipster.' + this.name + '.json configuration file, automatically generating the entity'));
+        try {
+            this.fileData = JSON.parse(this.readFileAsString('.jhipster.' + this.name + '.json'))
+        } catch (err) {
+            console.log(chalk.red('The configuration file could not be read!'));
+            return;
+        }
+        this.useConfigurationFile = true;
+    }
     console.log(chalk.red('The entity ' + this.name + ' is being created.'));
     this.env.options.appPath = this.config.get('appPath') || 'src/main/webapp';
     this.baseName = this.config.get('baseName');
@@ -21,8 +31,6 @@ var EntityGenerator = module.exports = function EntityGenerator(args, options, c
     this.angularAppName = _s.camelize(_s.slugify(this.baseName)) + 'App';
 
     // Specific Entity sub-generator variables
-    this.pkManagedByJHipster = false;
-    this.primaryKeyDefined = false;     // Only 1 Primary Key is allowed
     this.fieldId = 0;
     this.fields = [];
     this.fieldsContainLocalDate = false;
@@ -33,12 +41,6 @@ var EntityGenerator = module.exports = function EntityGenerator(args, options, c
     this.fieldsContainOneToMany = false;
     this.relationshipId = 0;
     this.relationships = [];
-    this.primaryKeyField = {fieldId: 0,
-        fieldName: "id",
-        fieldType: "Long",
-        fieldNameCapitalized: _s.capitalize("id"),
-        fieldNameUnderscored: _s.underscored("id"),
-        isPk: true};
 };
 
 var fieldNamesUnderscored = ['id'];
@@ -46,29 +48,10 @@ var fieldNamesUnderscored = ['id'];
 util.inherits(EntityGenerator, yeoman.generators.Base);
 util.inherits(EntityGenerator, scriptBase);
 
-EntityGenerator.prototype.askForCompositePrimaryKey = function askForCompositePrimaryKey() {
-    var cb = this.async();
-    var prompts = [
-        {
-            type: 'confirm',
-            name: 'jHipsterManagePK',
-            message: 'Do you want to let JHipster manage the primary key of your entity?',
-            default: true
-        }
-    ];
-    this.prompt(prompts, function (props) {
-        if (props.jHipsterManagePK == true) {
-            this.pkManagedByJHipster = true;
-        } else {
-            this.pkManagedByJHipster = false;
-        }
-        cb();
-    }.bind(this));
-};
-
 EntityGenerator.prototype.askForFields = function askForFields() {
-    var pkManagedByJHipster = this.pkManagedByJHipster;
-    var primaryKeyDefined = this.primaryKeyDefined;
+    if (this.useConfigurationFile == true) {// don't prompt if data are imported from a file
+        return;
+    }
     var cb = this.async();
     this.fieldId++;
     console.log(chalk.green('Generating field #' + this.fieldId));
@@ -129,28 +112,15 @@ EntityGenerator.prototype.askForFields = function askForFields() {
                 }
             ],
             default: 0
-        },
-        {
-            when: function (response) {
-                return response.fieldAdd == true && pkManagedByJHipster == false && primaryKeyDefined == false;
-            },
-            type: 'confirm',
-            name: 'primaryKey',
-            message: 'Is this field your primary key?',
-            default: false
         }
     ];
     this.prompt(prompts, function (props) {
         if (props.fieldAdd) {
-            if (props.primaryKey) {
-                this.primaryKeyDefined = true;
-            }
             var field = {fieldId: this.fieldId,
                 fieldName: props.fieldName,
                 fieldType: props.fieldType,
                 fieldNameCapitalized: _s.capitalize(props.fieldName),
-                fieldNameUnderscored: _s.underscored(props.fieldName),
-                isPk: props.primaryKey}
+                fieldNameUnderscored: _s.underscored(props.fieldName)}
 
             fieldNamesUnderscored.push(_s.underscored(props.fieldName));
             this.fields.push(field);
@@ -168,26 +138,20 @@ EntityGenerator.prototype.askForFields = function askForFields() {
         }
         console.log(chalk.red('===========' + _s.capitalize(this.name) + '=============='));
         for (var id in this.fields) {
-            var pk = "";
-            if (this.fields[id].isPk == true) {
-                pk = "PK";
-            }
-            console.log(chalk.red(this.fields[id].fieldName + ' (' + this.fields[id].fieldType + ') ' + pk));
+            console.log(chalk.red(this.fields[id].fieldName + ' (' + this.fields[id].fieldType + ')'));
         }
         if (props.fieldAdd) {
             this.askForFields();
         } else {
-            if (this.pkManagedByJHipster == false && this.primaryKeyDefined == false) {
-                // No primary key is defined : Error
-                console.log(chalk.red('ERROR : No primary key is defined !!'));
-                return;
-            }
             cb();
         }
     }.bind(this));
 };
 
 EntityGenerator.prototype.askForRelationships = function askForRelationships() {
+    if (this.useConfigurationFile == true) {// don't prompt if data are imported from a file
+        return;
+    }
     if (this.databaseType == 'nosql') {
         return;
     }
@@ -317,55 +281,73 @@ EntityGenerator.prototype.askForRelationships = function askForRelationships() {
             cb();
         }
     }.bind(this));
+
 };
 
 
 EntityGenerator.prototype.files = function files() {
-
+    if (this.databaseType == "sql") {
+        this.changelogDate = this.dateFormatForLiquibase();
+    }
+    if (this.useConfigurationFile == false) { // store informations in a file for further use.
+    	this.data = {};
+    	this.data.relationships = this.relationships;
+    	this.data.fields = this.fields;
+    	this.data.fieldNamesUnderscored = this.fieldNamesUnderscored;
+    	this.data.fieldsContainOwnerManyToMany = this.fieldsContainOwnerManyToMany;
+    	this.data.fieldsContainOneToMany = this.fieldsContainOneToMany;
+    	this.data.fieldsContainLocalDate = this.fieldsContainLocalDate;
+    	this.data.fieldsContainCustomTime = this.fieldsContainCustomTime;
+    	this.data.fieldsContainBigDecimal = this.fieldsContainBigDecimal;
+    	this.data.fieldsContainDateTime = this.fieldsContainDateTime;
+        this.data.changelogDate = this.changelogDate;
+    	this.filename = '.jhipster.' + this.name + '.json';
+     	this.write(this.filename, JSON.stringify(this.data, null, 4));
+ 	} else 	{
+    	this.relationships = this.fileData.relationships;
+    	this.fields = this.fileData.fields;
+    	this.fieldNamesUnderscored = this.fileData.fieldNamesUnderscored;
+    	this.fieldsContainOwnerManyToMany = this.fileData.fieldsContainOwnerManyToMany;
+    	this.fieldsContainOneToMany = this.fileData.fieldsContainOneToMany;
+    	this.fieldsContainLocalDate = this.fileData.fieldsContainLocalDate;
+    	this.fieldsContainCustomTime = this.fileData.fieldsContainCustomTime;
+    	this.fieldsContainBigDecimal = this.fileData.fieldsContainBigDecimal;
+    	this.fieldsContainDateTime = this.fileData.fieldsContainDateTime;
+        this.changelogDate = this.fileData.changelogDate;
+ 	}
     this.entityClass = _s.capitalize(this.name);
     this.entityInstance = this.name.charAt(0).toLowerCase() + this.name.slice(1);
-    // Resolve the primary key to use
-    if (this.pkManagedByJHipster == false) {
-        // Take the pk defined by the user
-        this.primaryKeyField = entityUtils.getPrimaryKeyField(this.fields);
-    }
-
     var resourceDir = 'src/main/resources/';
 
     this.template('src/main/java/package/domain/_Entity.java',
-        'src/main/java/' + this.packageFolder + '/domain/' +    this.entityClass + '.java');
+        'src/main/java/' + this.packageFolder + '/domain/' +    this.entityClass + '.java', this, {});
 
     this.template('src/main/java/package/repository/_EntityRepository.java',
-        'src/main/java/' + this.packageFolder + '/repository/' +    this.entityClass + 'Repository.java');
+        'src/main/java/' + this.packageFolder + '/repository/' +    this.entityClass + 'Repository.java', this, {});
 
     this.template('src/main/java/package/web/rest/_EntityResource.java',
-        'src/main/java/' + this.packageFolder + '/web/rest/' +    this.entityClass + 'Resource.java');
+        'src/main/java/' + this.packageFolder + '/web/rest/' +    this.entityClass + 'Resource.java', this, {});
 
     if (this.databaseType == "sql") {
-        this.changelogDate = this.dateFormatForLiquibase();
         this.template(resourceDir + '/config/liquibase/changelog/_added_entity.xml',
-            resourceDir + 'config/liquibase/changelog/' + this.changelogDate + '_added_entity_' + this.entityClass + '.xml');
+            resourceDir + 'config/liquibase/changelog/' + this.changelogDate + '_added_entity_' + this.entityClass + '.xml', this, {});
 
         this.addChangelogToLiquibase(this.changelogDate + '_added_entity_' + this.entityClass);
     }
 
-    this.template('src/main/webapp/views/_entities.html',
-        'src/main/webapp/views/' +    this.entityInstance + 's.html');
+    this.template('src/main/webapp/app/_entities.html',
+        'src/main/webapp/app/entities/' +    this.entityInstance  + '/' + this.entityInstance + 's.html', this, {});
 
-    this.template('src/main/webapp/scripts/_entity-router.js',
-        'src/main/webapp/scripts/' +    this.entityInstance + '/router_'+this.entityInstance+'.js');
-    this.addScriptToIndex(this.entityInstance + '/router_'+this.entityInstance+'.js');
     this.addRouterToMenu(this.entityInstance);
 
-    this.template('src/main/webapp/scripts/_entity-controller.js',
-        'src/main/webapp/scripts/' +    this.entityInstance + '/controller_'+this.entityInstance+'.js');
-    this.addScriptToIndex(this.entityInstance + '/controller_'+this.entityInstance+'.js');
+    this.template('src/main/webapp/app/_entity-controller.js',
+        'src/main/webapp/app/entities/' +    this.entityInstance + '/' + this.entityInstance + '.controller' + '.js', this, {});
+    this.addAppScriptToIndex(this.entityInstance + '/' + this.entityInstance + '.controller' + '.js');
 
-    this.template('src/main/webapp/scripts/_entity-service.js',
-        'src/main/webapp/scripts/' +    this.entityInstance + '/service_'+this.entityInstance+'.js');
-    this.addScriptToIndex(this.entityInstance + '/service_'+this.entityInstance+'.js');
+    this.template('src/main/webapp/components/_entity-service.js',
+        'src/main/webapp/components/entities/' + this.entityInstance + '/' + this.entityInstance + '.service' + '.js', this, {});
+    this.addComponentsScriptToIndex(this.entityInstance + '/' + this.entityInstance + '.service' + '.js');
 
     this.template('src/test/java/package/web/rest/_EntityResourceTest.java',
-        'src/test/java/' + this.packageFolder + '/web/rest/' +    this.entityClass + 'ResourceTest.java');
-
+        'src/test/java/' + this.packageFolder + '/web/rest/' +    this.entityClass + 'ResourceTest.java', this, {});
 };

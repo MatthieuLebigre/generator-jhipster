@@ -1,10 +1,10 @@
 package <%=packageName%>.service;
 
-import <%=packageName%>.domain.Authority;
-import <%=packageName%>.domain.PersistentToken;
+import <%=packageName%>.domain.Authority;<% if (authenticationType == 'cookie') { %>
+import <%=packageName%>.domain.PersistentToken;<% } %>
 import <%=packageName%>.domain.User;
-import <%=packageName%>.repository.AuthorityRepository;
-import <%=packageName%>.repository.PersistentTokenRepository;
+import <%=packageName%>.repository.AuthorityRepository;<% if (authenticationType == 'cookie') { %>
+import <%=packageName%>.repository.PersistentTokenRepository;<% } %>
 import <%=packageName%>.repository.UserRepository;
 import <%=packageName%>.security.SecurityUtils;
 import <%=packageName%>.service.util.RandomUtil;
@@ -36,17 +36,17 @@ public class UserService {
     private PasswordEncoder passwordEncoder;
 
     @Inject
-    private UserRepository userRepository;
+    private UserRepository userRepository;<% if (authenticationType == 'cookie') { %>
 
     @Inject
-    private PersistentTokenRepository persistentTokenRepository;
+    private PersistentTokenRepository persistentTokenRepository;<% } %>
 
     @Inject
     private AuthorityRepository authorityRepository;
 
     public User activateRegistration(String key) {
         log.debug("Activating user for activation key {}", key);<% if (javaVersion == '8') { %>
-        return Optional.ofNullable(userRepository.getUserByActivationKey(key))
+        return userRepository.findOneByActivationKey(key)
             .map(user -> {
                 // activate given user for the registration key.
                 user.setActivated(true);
@@ -56,7 +56,7 @@ public class UserService {
                 return user;
             })
             .orElse(null);<% } else { %>
-        User user = userRepository.getUserByActivationKey(key);
+        User user = userRepository.findOneByActivationKey(key);
 
         // activate given user for the registration key.
         if (user != null) {
@@ -93,7 +93,7 @@ public class UserService {
     }
 
     public void updateUserInformation(String firstName, String lastName, String email) {
-        User currentUser = userRepository.findOne(SecurityUtils.getCurrentLogin());
+        User currentUser = userRepository.findOneByLogin(SecurityUtils.getCurrentLogin());
         currentUser.setFirstName(firstName);
         currentUser.setLastName(lastName);
         currentUser.setEmail(email);
@@ -102,7 +102,7 @@ public class UserService {
     }
 
     public void changePassword(String password) {
-        User currentUser = userRepository.findOne(SecurityUtils.getCurrentLogin());
+        User currentUser = userRepository.findOneByLogin(SecurityUtils.getCurrentLogin());
         String encryptedPassword = passwordEncoder.encode(password);
         currentUser.setPassword(encryptedPassword);
         userRepository.save(currentUser);
@@ -111,10 +111,10 @@ public class UserService {
 <% if (databaseType == 'sql') { %>
     @Transactional(readOnly = true)<% } %>
     public User getUserWithAuthorities() {
-        User currentUser = userRepository.findOne(SecurityUtils.getCurrentLogin());
+        User currentUser = userRepository.findOneByLogin(SecurityUtils.getCurrentLogin());
         currentUser.getAuthorities().size(); // eagerly load the association
         return currentUser;
-    }
+    }<% if (authenticationType == 'cookie') { %>
 
     /**
      * Persistent Token are used for providing automatic authentication, they should be automatically deleted after
@@ -134,7 +134,7 @@ public class UserService {
             user.getPersistentTokens().remove(token);<% } %>
             persistentTokenRepository.delete(token);
         }
-    }
+    }<% } %>
 
     /**
      * Not activated users should be automatically deleted after 3 days.
@@ -146,7 +146,7 @@ public class UserService {
     @Scheduled(cron = "0 0 1 * * ?")
     public void removeNotActivatedUsers() {
         DateTime now = new DateTime();
-        List<User> users = userRepository.findNotActivatedUsersByCreationDateBefore(now.minusDays(3));
+        List<User> users = userRepository.findAllByActivatedIsFalseAndCreatedDateBefore(now.minusDays(3));
         for (User user : users) {
             log.debug("Deleting not activated user {}", user.getLogin());
             userRepository.delete(user);
